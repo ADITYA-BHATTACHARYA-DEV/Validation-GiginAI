@@ -1,37 +1,47 @@
 import os
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter 
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings # Local embeddings for efficiency
-
+from langchain_huggingface import HuggingFaceEmbeddings
+# Change from: from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma #
 class RAGEngine:
     def __init__(self):
+        # Setting up persistence and local AI models
         self.persist_directory = os.getenv("VECTOR_DB_PATH", "./data/vector_db")
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2") # Fast local model
-        self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100) #
+        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        
+        # Ensure the storage directory exists
+        os.makedirs(self.persist_directory, exist_ok=True)
+        
+        # Initialize the vector store once
+        self.vector_store = Chroma(
+            persist_directory=self.persist_directory,
+            embedding_function=self.embeddings
+        )
 
     def process_resume(self, file_path: str, candidate_id: str):
-        # 1. Load and Split
+        """Extracts PDF text and indexes it with metadata"""
         loader = PyPDFLoader(file_path)
         pages = loader.load()
         chunks = self.text_splitter.split_documents(pages)
 
-        # 2. Add Candidate ID to metadata for scoped retrieval
+        # Scoping text chunks to a specific candidate
         for chunk in chunks:
             chunk.metadata["candidate_id"] = candidate_id
 
-        # 3. Store in ChromaDB
-        vector_db = Chroma.from_documents(
-            documents=chunks,
-            embedding=self.embeddings,
-            persist_directory=self.persist_directory
-        )
+        # Adding documents to the existing persistent store
+        self.vector_store.add_documents(chunks)
         return True
 
-    def query_context(self, candidate_id: str, query: str, k: int = 4):
-        vector_db = Chroma(persist_directory=self.persist_directory, embedding_function=self.embeddings)
-        # Search only within this candidate's resume
-        results = vector_db.similarity_search(
-            query, k=k, filter={"candidate_id": candidate_id}
+    def get_full_context(self, candidate_id: str):
+        """Retrieves all indexed text for a specific candidate"""
+        # Using the .get method to filter by metadata
+        results = self.vector_store.get(
+            where={"candidate_id": candidate_id}
         )
-        return "\n\n".join([doc.page_content for doc in results])
+        
+        if results and results['documents']:
+            return "\n\n".join(results['documents'])
+        return None
