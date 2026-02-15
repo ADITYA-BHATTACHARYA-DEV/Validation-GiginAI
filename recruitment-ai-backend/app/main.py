@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.endpoints import ingest, analyze, history, chat  # Added chat import
 from app.core.config import settings
-
+from app.api.v1.endpoints import ingest, analyze, history, chat, compare # Add 'compare'
 # 1. INITIALIZE APP
 app = FastAPI(title=settings.PROJECT_NAME, version="1.0.0")
 
@@ -22,7 +22,7 @@ app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}/ingest", tags=[
 app.include_router(analyze.router, prefix=f"{settings.API_V1_STR}/analyze", tags=["analyze"])
 app.include_router(history.router, prefix=f"{settings.API_V1_STR}/history", tags=["history"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])  # Added Chat Router
-
+app.include_router(compare.router, prefix=f"{settings.API_V1_STR}/compare", tags=["compare"]) # Add this
 # 4. MONITORING
 @app.get("/health")
 async def health_check():
