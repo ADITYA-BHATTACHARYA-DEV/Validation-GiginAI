@@ -33,33 +33,33 @@
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-
 from fastapi import APIRouter, HTTPException
 from app.agents.auditor import ResumeAuditor
 from app.agents.retention import RetentionPredictor
 from app.agents.depth_agent import DepthAgent
 from app.agents.parser import ResumeParser
 from app.services.rag_engine import RAGEngine
-from app.services.db_manager import DBManager # New persistence service
+from app.services.db_manager import DBManager 
 
 router = APIRouter()
 
-# Initialize all specialized agents
+# Initialize Agents and Services
 auditor = ResumeAuditor()
 retention_agent = RetentionPredictor()
 depth_agent = DepthAgent()
 parser = ResumeParser()
 rag = RAGEngine()
-db_manager = DBManager() # Manages SQLite operations
+db_manager = DBManager()
+
+
+# ... (imports remain the same) ...
 
 @router.get("/{candidate_id}")
 async def get_full_analysis(candidate_id: str):
     try:
-        # 1. Database Check (Caching Layer)
-        # Check if we have already audited this candidate to save time/tokens
-        cached_audit = db_manager.get_audit(candidate_id)
+        # 1. READ Cache
+        cached_audit = db_manager.get_audit_by_id(candidate_id)
         if cached_audit:
-            # SQLAlchemy objects need to be converted to dict for FastAPI response
             return {
                 "candidate_id": cached_audit.candidate_id,
                 "audit_report": cached_audit.audit_report,
@@ -71,51 +71,104 @@ async def get_full_analysis(candidate_id: str):
                 "metadata": {"source": "database"}
             }
 
-        # 2. Retrieve raw text context from ChromaDB
+        # 2. RAG & AI Pipeline
         context = rag.get_full_context(candidate_id)
-        if not context:
-            raise HTTPException(status_code=404, detail="Candidate data not found in vector store.")
-
-        # 3. Execution Phase (AI Agents)
-        # Parse text into structured JSON for the Graph Agent
         structured_exp = parser.extract_experience(context)
-        
-        # Calculate Math-based Depth Score
         depth_score = depth_agent.calculate_depth(structured_exp)
         
-        # Predict Stability Risk & Percentage
+        # This returns: {"risk_level": "High", "stability_percentage": 20, "reasoning": "..."}
         retention_data = retention_agent.predict_stability(candidate_id)
         
-        # Generate Qualitative Audit Report
         text_audit = auditor.run_full_audit(candidate_id)
 
-        # 4. Persistence Phase
-        # Prepare the data dictionary for SQLite
-        final_data = {
+        # 3. FIX: UNPACK data for the Database
+        # Ensure these keys match exactly what's in your AuditRecord model
+        final_payload = {
             "candidate_id": candidate_id,
             "audit_report": text_audit,
             "depth_score": round(depth_score, 2),
-            "retention_risk": retention_data.get("risk_level", "Medium"),
-            "retention_percentage": retention_data.get("stability_percentage", 50),
-            "retention_reasoning": retention_data.get("reasoning", "No data available."),
-            "experience_json": structured_exp # Maps to the JSON column in DB
+            "retention_risk": retention_data.get("risk_level", "Medium"), # Extracted from dict
+            "retention_percentage": retention_data.get("stability_percentage", 50), # Extracted
+            "retention_reasoning": retention_data.get("reasoning", "Analysis complete."), # Extracted
+            "experience_json": structured_exp
         }
         
-        # Save the result so we don't have to run Groq again for this ID
-        db_manager.save_audit(final_data)
+        # 4. STORE
+        db_manager.save_audit(final_payload)
 
-        # 5. Return Response
         return {
-            **final_data,
-            "experience_extracted": structured_exp, # Key match for frontend DebugLog
-            "metadata": {
-                "jobs_analyzed": len(structured_exp),
-                "parsing_status": "success" if structured_exp else "failed",
-                "source": "ai_engine"
-            }
+            **final_payload,
+            "experience_extracted": structured_exp,
+            "metadata": {"source": "ai_engine"}
         }
         
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Analysis pipeline failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# @router.get("/{candidate_id}")
+# async def get_full_analysis(candidate_id: str):
+#     """
+#     Retrieves analysis from SQLite cache or triggers the AI Pipeline.
+#     """
+#     try:
+#         # 1. READ: Check if this audit already exists in SQLite
+#         cached_audit = db_manager.get_audit_by_id(candidate_id)
+#         if cached_audit:
+#             return {
+#                 "candidate_id": cached_audit.candidate_id,
+#                 "audit_report": cached_audit.audit_report,
+#                 "depth_score": cached_audit.depth_score,
+#                 "retention_risk": cached_audit.retention_risk,
+#                 "retention_percentage": cached_audit.retention_percentage,
+#                 "retention_reasoning": cached_audit.retention_reasoning,
+#                 "experience_extracted": cached_audit.experience_json,
+#                 "metadata": {"source": "database", "status": "retrieved"}
+#             }
+
+#         # 2. RAG: Retrieve context from ChromaDB
+#         context = rag.get_full_context(candidate_id)
+#         if not context:
+#             raise HTTPException(status_code=404, detail="Resume context not found. Please re-upload.")
+
+#         # 3. AI PIPELINE: Run specialized agents via Groq
+#         # A. Parse into structured JSON for the Graph
+#         structured_exp = parser.extract_experience(context)
+        
+#         # B. Calculate Graph-based depth (NetworkX)
+#         depth_score = depth_agent.calculate_depth(structured_exp)
+        
+#         # C. Predict stability and reasoning
+#         retention_data = retention_agent.predict_stability(candidate_id)
+        
+#         # D. Generate qualitative audit
+#         text_audit = auditor.run_full_audit(candidate_id)
+
+#         # 4. STORE: Save the final results to SQLite
+#         final_payload = {
+#             "candidate_id": candidate_id,
+#             "audit_report": text_audit,
+#             "depth_score": round(depth_score, 2),
+#             "retention_risk": retention_data.get("risk_level", "Medium"),
+#             "retention_percentage": retention_data.get("stability_percentage", 50),
+#             "retention_reasoning": retention_data.get("reasoning", "Analysis complete."),
+#             "experience_json": structured_exp
+#         }
+        
+#         db_manager.save_audit(final_payload)
+
+#         # 5. RESPONSE: Return to Next.js Frontend
+#         return {
+#             **final_payload,
+#             "experience_extracted": structured_exp,
+#             "metadata": {
+#                 "source": "ai_engine",
+#                 "jobs_analyzed": len(structured_exp)
+#             }
+#         }
+        
+#     except Exception as e:
+#         import traceback
+#         print(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=f"Analysis pipeline crashed: {str(e)}")
