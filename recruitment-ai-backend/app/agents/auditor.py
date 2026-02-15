@@ -46,6 +46,7 @@ class ResumeAuditor:
                 "2. Ensure all headings and text are clean, plain-text strings.\n\n"
                 "STRICT JSON OUTPUT SCHEMA:\n"
                 "{\n"
+                "  \"candidate_name\": \"Full Name found in resume (String)\",\n"
                 "  \"summary_heading\": \"A bold stylized title (e.g., FORENSIC VERDICT)\",\n"
                 "  \"summary_text\": \"2-sentence executive summary\",\n"
                 "  \"ai_generated_score\": 0-100 (Integer),\n"
