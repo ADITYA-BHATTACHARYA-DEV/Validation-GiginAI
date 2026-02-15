@@ -1,8 +1,9 @@
 "use client";
 
-import { History, LayoutDashboard, RefreshCw, UploadCloud, User, UserSearch } from "lucide-react";
+import { History, LayoutDashboard, RefreshCw, Swords, UploadCloud, User, UserSearch } from "lucide-react";
 import { Inter } from "next/font/google";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import "./globals.css";
 
@@ -10,7 +11,6 @@ const inter = Inter({ subsets: ["latin"] });
 
 /**
  * HISTORY LIST COMPONENT
- * Robust version with error handling and auto-refresh
  */
 function HistoryList() {
   const [history, setHistory] = useState<any[]>([]);
@@ -18,7 +18,6 @@ function HistoryList() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      // Ensure this matches your backend settings.API_V1_STR exactly
       const response = await fetch("http://localhost:8000/api/v1/history");
       if (!response.ok) throw new Error("Network response was not ok");
       const data = await response.json();
@@ -32,7 +31,6 @@ function HistoryList() {
 
   useEffect(() => {
     fetchHistory();
-    // Refresh every 30 seconds to catch new uploads
     const interval = setInterval(fetchHistory, 30000);
     return () => clearInterval(interval);
   }, [fetchHistory]);
@@ -52,7 +50,7 @@ function HistoryList() {
         </button>
       </div>
 
-      <div className="space-y-1 max-h-[45vh] overflow-y-auto pr-1 custom-scrollbar">
+      <div className="space-y-1 max-h-[35vh] overflow-y-auto pr-1 custom-scrollbar">
         {isLoading ? (
           <div className="space-y-2 px-2">
             <div className="h-3 bg-gray-100 rounded animate-pulse w-full"></div>
@@ -82,10 +80,14 @@ function HistoryList() {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
     { name: "Upload Resume", href: "/upload", icon: <UploadCloud size={20} /> },
     { name: "Candidate Search", href: "/", icon: <UserSearch size={20} /> },
+    // NEW: Compare Mode Navigation Item
+    { name: "Compare Mode", href: "/compare", icon: <Swords size={20} /> },
   ];
 
   return (
@@ -100,16 +102,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
 
           <nav className="flex-1 px-4 space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className="flex items-center space-x-3 p-3 rounded-xl hover:bg-blue-50 hover:text-blue-600 text-slate-600 font-semibold transition-all"
-              >
-                {item.icon}
-                <span>{item.name}</span>
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={`flex items-center space-x-3 p-3 rounded-xl transition-all font-semibold ${
+                    isActive 
+                      ? "bg-blue-600 text-white shadow-lg shadow-blue-200" 
+                      : "hover:bg-blue-50 hover:text-blue-600 text-slate-600"
+                  }`}
+                >
+                  <span className={isActive ? "text-white" : ""}>
+                    {item.icon}
+                  </span>
+                  <span>{item.name}</span>
+                </Link>
+              );
+            })}
 
             {/* Sidebar History Section */}
             <HistoryList />
@@ -118,14 +129,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="p-6 border-t border-gray-50">
             <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
               <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              <span>Node Active</span>
+              <span>LPU Core Active</span>
             </div>
           </div>
         </aside>
 
         {/* Main Workspace */}
         <main className="flex-1 overflow-y-auto relative bg-slate-50/50">
-          <div className="max-w-7xl mx-auto h-full">
+          <div className="max-w-7xl mx-auto h-full p-0">
             {children}
           </div>
         </main>
