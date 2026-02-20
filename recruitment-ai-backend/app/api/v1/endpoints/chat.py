@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Any, Optional
 from app.agents.chat_agent import ResumeChatAgent
 from app.services.rag_engine import RAGEngine
 
@@ -8,56 +8,76 @@ router = APIRouter()
 chat_agent = ResumeChatAgent()
 rag = RAGEngine()
 
-# Use Pydantic for strict validation of the chat history
 class ChatMessage(BaseModel):
     role: str
     content: str
 
 class ChatRequest(BaseModel):
-    candidate_id: str
+    # Optional because it's null when chatting about a comparison
+    candidate_id: Optional[str] = None
     query: str
-    history: List[ChatMessage] = [] # Validates the history list structure
+    history: List[ChatMessage] = []
+    # New Field: Context passed from the Frontend Comparison results
+    comparison_context: Optional[Dict[str, Any]] = None 
 
 @router.post("/query")
-async def chat_with_resume(request: ChatRequest):
+async def chat_with_advisor(request: ChatRequest):
     """
     Agentic Chat Endpoint:
-    Retrieves vectorized context from RAG and returns a grounded 
-    AI response with citations.
+    Handles both individual resume Q&A and Comparison-wide debates.
     """
     try:
-        # 1. Context Retrieval (RAG Layer)
-        context = rag.get_full_context(request.candidate_id)
-        if not context:
-            raise HTTPException(
-                status_code=404, 
-                detail="Candidate context not found in vector store."
+        context = ""
+        
+        # SCENARIO A: User is asking about a specific candidate in a deep-dive
+        if request.candidate_id:
+            raw_context = rag.get_full_context(request.candidate_id)
+            if not raw_context:
+                raise HTTPException(status_code=404, detail="Candidate context not found.")
+            context = f"INDIVIDUAL CANDIDATE DATA:\n{raw_context}"
+
+        # SCENARIO B: User is asking follow-up questions on a Comparison Audit
+        elif request.comparison_context:
+            jd = request.comparison_context.get("jd", "N/A")
+            results = request.comparison_context.get("comparison_results", {})
+            
+            # Format comparison results for the LLM to understand the rankings
+            leaderboard_summary = ""
+            if "leaderboard" in results:
+                for c in results["leaderboard"]:
+                    leaderboard_summary += (
+                        f"- {c.get('candidate_name')} (Match: {c.get('fit_score')}%, "
+                        f"Stability: {c.get('retention_score')}%): {c.get('verdict')}\n"
+                    )
+            
+            context = (
+                f"AUDIT CONTEXT:\n"
+                f"JOB DESCRIPTION: {jd[:1000]}\n"
+                f"RANKINGS:\n{leaderboard_summary}\n"
+                f"EXECUTIVE SUMMARY: {results.get('executive_summary', 'N/A')}"
             )
 
-        # 2. Format history for the Groq Agent
-        # Converts Pydantic objects back to a list of dicts
-        formatted_history = [
-            {"role": msg.role, "content": msg.content} 
-            for msg in request.history
-        ]
+        # SCENARIO C: No context provided
+        else:
+            raise HTTPException(status_code=400, detail="No candidate ID or comparison context provided.")
 
-        # 3. Agent Execution (Groq Llama-3 70B)
-        # result is expected to be a dict: {"answer": str, "citation": str | None}
+        # Convert Pydantic history to dicts
+        formatted_history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+
+        # Agent Execution (Llama-3 70B)
         result = chat_agent.answer_query(
             query=request.query, 
             context=context, 
             history=formatted_history
         )
         
-        # 4. Final Response Construction
         return {
             "answer": result.get("answer", "I couldn't generate an answer."),
             "citation": result.get("citation"),
-            "candidate_id": request.candidate_id,
             "status": "success"
         }
 
     except Exception as e:
         import traceback
         print(f"CHAT_ERROR: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Agentic Chat failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

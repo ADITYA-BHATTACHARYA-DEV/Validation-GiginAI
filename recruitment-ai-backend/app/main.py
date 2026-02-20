@@ -1,13 +1,17 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.endpoints import ingest, analyze, history, chat  # Added chat import
+from app.api.v1.endpoints import ingest, analyze, history, chat, compare 
 from app.core.config import settings
-from app.api.v1.endpoints import ingest, analyze, history, chat, compare # Add 'compare'
+
 # 1. INITIALIZE APP
-app = FastAPI(title=settings.PROJECT_NAME, version="1.0.0")
+app = FastAPI(
+    title=settings.PROJECT_NAME, 
+    version="1.0.0",
+    description="AI-Powered Talent Battle Royale & Forensic Resume Auditor"
+)
 
 # 2. SETUP CORS
-# Essential for allowing the Next.js frontend to send POST requests to the API
+# Essential for allowing the Next.js frontend (localhost:3000) to communicate with FastAPI
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -17,27 +21,26 @@ app.add_middleware(
 )
 
 # 3. INCLUDE ROUTERS
-# Ensure all routers are registered under the correct API version prefix
+# Using versioned prefixes from settings.API_V1_STR (usually "/api/v1")
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}/ingest", tags=["ingest"])
 app.include_router(analyze.router, prefix=f"{settings.API_V1_STR}/analyze", tags=["analyze"])
 app.include_router(history.router, prefix=f"{settings.API_V1_STR}/history", tags=["history"])
-app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])  # Added Chat Router
-app.include_router(compare.router, prefix=f"{settings.API_V1_STR}/compare", tags=["compare"]) # Add this
+app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+app.include_router(compare.router, prefix=f"{settings.API_V1_STR}/compare", tags=["compare"])
+
 # 4. MONITORING
 @app.get("/health")
 async def health_check():
-    """Verify system health and list active endpoints"""
+    """Verify system health and list active endpoints."""
     return {
         "status": "healthy", 
         "version": "1.0.0",
-        "endpoints_active": [
-            f"{settings.API_V1_STR}/history", 
-            f"{settings.API_V1_STR}/analyze",
-            f"{settings.API_V1_STR}/chat"
-        ]
+        "active_modules": ["Ingest", "Analyze", "History", "Chat", "Compare"],
+        "api_prefix": settings.API_V1_STR
     }
 
-# 5. DIRECT UPLOAD (Fallback)
+# 5. FALLBACKS / DIRECT HANDLERS
 @app.post(f"{settings.API_V1_STR}/ingest/direct")
 async def upload_resume_direct(file: UploadFile = File(...)):
+    """Fallback handler for direct multi-part uploads."""
     return {"filename": file.filename, "status": "processing"}

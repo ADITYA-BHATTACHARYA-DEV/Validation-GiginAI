@@ -1,83 +1,89 @@
-# from fastapi import APIRouter, HTTPException
-# from pydantic import BaseModel
-# from app.agents.comparison_agent import ComparisonAgent
-# from app.services.rag_engine import RAGEngine
-
-# router = APIRouter()
-# agent = ComparisonAgent()
-# rag = RAGEngine()
-
-# class CompareRequest(BaseModel):
-#     id_a: str
-#     id_b: str
-#     job_description: str
-
-# @router.post("/")
-# async def compare_candidates(request: CompareRequest):
-#     ctx_a = rag.get_full_context(request.id_a)
-#     ctx_b = rag.get_full_context(request.id_b)
-    
-#     if not ctx_a or not ctx_b:
-#         raise HTTPException(status_code=404, detail="One or both candidates not found.")
-
-#     # The agent returns a dict: {"winner": "ID", "justification": [], "fit_score_a": 80, etc.}
-#     return agent.debate_candidates(ctx_a, ctx_b, request.job_description)
-
-
-
-
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.agents.comparison_agent import ComparisonAgent
 from app.services.rag_engine import RAGEngine
+import json
+import traceback
 
 router = APIRouter()
 agent = ComparisonAgent()
 rag = RAGEngine()
 
-# 1. Define Request Schema
+# 1. Structured Request Model
 class CompareRequest(BaseModel):
-    candidate_ids: List[str] 
+    candidate_ids: List[str]
     job_description: str
+    # 'forensic' (strict/deductive) or 'helpful' (potential/additive)
+    mode: str = "forensic" 
 
 @router.post("/")
 async def compare_candidates(request: CompareRequest):
     """
-    Endpoint to compare 2-5 candidates against a JD.
+    FastAPI endpoint to orchestrate multi-candidate analysis.
+    Now includes verbose debugging for forensic pipeline errors.
     """
-    # Validation: Ensure at least two candidates are selected
-    if len(request.candidate_ids) < 2:
+    
+    # 2. VALIDATION & DEDUPLICATION
+    unique_ids = []
+    seen = set()
+    for cid in request.candidate_ids:
+        cleaned_id = cid.strip()
+        if cleaned_id and cleaned_id not in seen:
+            unique_ids.append(cleaned_id)
+            seen.add(cleaned_id)
+    
+    if len(unique_ids) < 2:
         raise HTTPException(
             status_code=400, 
-            detail="Minimum 2 candidates required for a debate."
+            detail="Forensic comparison requires at least 2 unique candidates."
         )
 
-    # 2. Collect RAG contexts for all candidates
+    # 3. RAG PIPELINE
     candidate_data = []
-    for cid in request.candidate_ids:
-        # Skip empty strings if they sneak in from the frontend
-        if not cid: continue 
-            
+    for cid in unique_ids:
         context = rag.get_full_context(cid)
+        
         if not context:
+            # Helpful error to identify which specific ID is causing the 404
+            print(f"DEBUG: Candidate context MISSING for ID: {cid}")
             raise HTTPException(
                 status_code=404, 
-                detail=f"Candidate profile {cid} could not be retrieved from the index."
+                detail=f"Candidate reference '{cid}' not found in the index."
             )
-        candidate_data.append({"id": cid, "context": context})
+            
+        candidate_data.append({
+            "id": cid, 
+            "context": context
+        })
 
-    # 3. Execute Multi-Candidate Analysis
+    # 4. AGENT EXECUTION WITH VERBOSE DEBUGGING
     try:
-        # RECTIFIED: Method name must match ComparisonAgent.compare_multiple_candidates
-        result = agent.compare_multiple_candidates(candidate_data, request.job_description)
-        return result
+        print(f"DEBUG: Starting Comparison Logic for {len(candidate_data)} candidates in {request.mode} mode.")
         
+        result = agent.compare_multiple_candidates(
+            candidate_data, 
+            request.job_description, 
+            mode=request.mode
+        )
+        
+        # LOG RAW RESULT KEYS: Ensure all expected keys are present before returning
+        required_keys = ["winner_id", "leaderboard", "executive_summary"]
+        missing = [k for k in required_keys if k not in result]
+        
+        if missing:
+            print(f"WARNING: AI response is missing keys: {missing}")
+            # Optional: You could raise an error here or fill with defaults
+            
+        return result
+
     except Exception as e:
-        import traceback
-        print(f"COMPARISON_PIPELINE_ERROR: {traceback.format_exc()}")
+        # This will print the full error path to your server console
+        error_trace = traceback.format_exc()
+        print(f"\n--- PIPELINE CRITICAL ERROR ---\n{error_trace}\n-------------------------------\n")
+        
+        # Return a more descriptive error to the frontend
         raise HTTPException(
             status_code=500, 
-            detail=f"The AI Strategist failed to reach a verdict: {str(e)}"
+            detail=f"AI Engine Error: {str(e)}"
         )
